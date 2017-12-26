@@ -26,6 +26,8 @@ import (
 // 	url string
 // 	siteMap bool
 // }
+//test
+var test string
 
 var crawledLinks []string 
 
