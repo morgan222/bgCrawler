@@ -11,7 +11,6 @@ import (
 //	"reflect"
 )
 
-//minor change
 
 // type bg struct {
 // 	name string
@@ -29,7 +28,7 @@ import (
 // }
 
 var crawledLinks []string 
-var test string
+
 var m *sync.Mutex = new(sync.Mutex)
 
 var baseURLs = []bgSite{
