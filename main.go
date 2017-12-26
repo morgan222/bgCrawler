@@ -53,11 +53,6 @@ func main() {
 	defer close(c)
 
 
-	//crawlSiteMap
-	//get sitemap data - if there is a sitemap no need to crawl
-	crawlSiteMap(c)
-
-
 	//initialise crawlers with n= maxthreads crawlers
 	max_threads := 10
 	for i:=0;i < max_threads;i++{
@@ -75,54 +70,6 @@ func main() {
 	fmt.Scanln(&input)
 }
 
-//sitemap crawl is hard coded - might look at revisiting this later...
-func crawlSiteMap(c chan string) {
-
-	var content *goquery.Document 
-	var urls []string
-
-	for _, base := range baseSites{
-		
-		switch base.url {
-	    // case "http://www.adventgames.com.au":
-
-	    // 	content = getContent("http://www.adventgames.com.au/sitemap.xml")
-	    // 	urls = getSpanText(content,"http://www.milsims.com.au/sitemap.xml?page=1",base.url)
-	    // 	addUrls(c,&urls,&crawledLinks)
-	    // 	base.hasSitemap = true
-	   	case "http://www.milsims.com.au":
-
-	   		content = getContent("http://www.milsims.com.au/sitemap.xml?page=1")
-	   		fmt.Println(content)
-			urls = getUrls(content,"http://www.milsims.com.au/sitemap.xml?page=1",base.url)
-			fmt.Println(len(urls),base.url)
-			// addUrls(c,&urls,&crawledLinks)
-			// content = getContent("http://www.milsims.com.au/sitemap.xml?page=2")
-			// 
-			// urls = getUrls(content,"http://www.milsims.com.au/sitemap.xml?page=2",base.url)
-			// addUrls(c,&urls,&crawledLinks)
-			// base.hasSitemap = true
-	    default:
-	        base.hasSitemap = false
-	    }
-	    fmt.Println(len(crawledLinks),base.url)
-	}
-
-}
-
-// func shuffleChan(c chan string,){
-	
-
-// 	i:=0
-// 	amt:= time.Duration(rand.Intn(500))
-// 	time.Sleep(time.Millisecond *amt)
-// 	for {
-// 		msg:= <- c
-// 		i+=1
-// 		fmt.Println(i,msg)
-
-// 	}
-// }
 
 func crawl(c chan string, allowedSites []string, max_threads int){
 	//don't crawl links twice
@@ -180,38 +127,11 @@ func getUrls(doc *goquery.Document, url string, base string) []string {
 	
 	var urls []string
 
-	doc.Find("div").Each(func(i int, s *goquery.Selection) {
-		fmt.Println(i)
-	})
-
 	doc.Find("a").Each(func(i int, s *goquery.Selection) {
 
 
 	  	link, _ := s.Attr("href") //returns a string (must select what is inside)
 	  	fmt.Println(link)
-	  	if (strings.Contains(link,"http")) && !(strings.Contains(link,"javascript")) && (in_array(link,baseURLs)) {
-		  	if (string(link[0]) =="/"){
-		  		//find the base 
-		  		urls = append(urls,base+link)
-		  	} else {
-		  		urls = append(urls,link)
-		  	}
-	  	}
-	  	
-
-  	})
-
-	return urls
-}
-
-func getSpanText(doc *goquery.Document, url string, base string) []string {
-	
-	var urls []string
-
-	doc.Find("span.text").Each(func(i int, s *goquery.Selection) {
-		
-		link := s.Text()
-
 	  	if (strings.Contains(link,"http")) && !(strings.Contains(link,"javascript")) && (in_array(link,baseURLs)) {
 		  	if (string(link[0]) =="/"){
 		  		//find the base 
