@@ -22,50 +22,49 @@ import (
 
 // var bgs []bg
 
-// type bgSite struct {
-// 	url string
-// 	siteMap bool
-// }
-//test
-var test string
+type bgSite struct {
+	url string
+	hasSitemap bool //can have multiple sitemaps
+}
+
 
 var crawledLinks []string 
 
 var m *sync.Mutex = new(sync.Mutex)
 
-var baseURLs = []bgSite{
+var baseURLs = []string{
 		"http://www.adventgames.com.au",
 		"http://www.gamesparadise.com.au",
 		"http://www.milsims.com.au"}
 
-
+var baseSites =[]bgSite{
+		{"http://www.adventgames.com.au", false},
+		{"http://www.gamesparadise.com.au",false},
+		{"http://www.milsims.com.au",false},
+	}
 
 
 func main() {
 	//robots.txt, wait time so I don't denial of service //wait time
 
+	//initialise a channel with a bugger
 	buffer := 10000
 	var c chan string = make(chan string,buffer)
 	defer close(c)
-	//m = new(sync.Mutex)
 
-	//max threads used
-	max_threads := 10
-
-	//set first site to crawl
-	// bgStie := "http://www.adventgames.com.au/"
-	// bgStie = "http://www.adventgames.com.au/p/9287023/planet-of-the-apes.html"
-	// bgStie = "http://www.gamesparadise.com.au/small-world-legends-tales-expansion"
 
 	//crawlSiteMap
 	//get sitemap data - if there is a sitemap no need to crawl
+	crawlSiteMap(c)
 
-	//find links //how many concurrent links can I do?
+
+	//initialise crawlers with n= maxthreads crawlers
+	max_threads := 10
 	for i:=0;i < max_threads;i++{
 		go crawl(c, baseURLs, max_threads)	
 	}
 	c <- "http://www.gamesparadise.com.au/board-games"
-	//c <- "http://www.gamesparadise.com.au"
+	c <- "http://www.gamesparadise.com.au"
 	
 	// for _, value := range allowedSites {
 	// 	c <- value
@@ -74,6 +73,41 @@ func main() {
 	//don't want program to exit
 	var input string
 	fmt.Scanln(&input)
+}
+
+//sitemap crawl is hard coded - might look at revisiting this later...
+func crawlSiteMap(c chan string) {
+
+	var content *goquery.Document 
+	var urls []string
+
+	for _, base := range baseSites{
+		
+		switch base.url {
+	    // case "http://www.adventgames.com.au":
+
+	    // 	content = getContent("http://www.adventgames.com.au/sitemap.xml")
+	    // 	urls = getSpanText(content,"http://www.milsims.com.au/sitemap.xml?page=1",base.url)
+	    // 	addUrls(c,&urls,&crawledLinks)
+	    // 	base.hasSitemap = true
+	   	case "http://www.milsims.com.au":
+
+	   		content = getContent("http://www.milsims.com.au/sitemap.xml?page=1")
+	   		fmt.Println(content)
+			urls = getUrls(content,"http://www.milsims.com.au/sitemap.xml?page=1",base.url)
+			fmt.Println(len(urls),base.url)
+			// addUrls(c,&urls,&crawledLinks)
+			// content = getContent("http://www.milsims.com.au/sitemap.xml?page=2")
+			// 
+			// urls = getUrls(content,"http://www.milsims.com.au/sitemap.xml?page=2",base.url)
+			// addUrls(c,&urls,&crawledLinks)
+			// base.hasSitemap = true
+	    default:
+	        base.hasSitemap = false
+	    }
+	    fmt.Println(len(crawledLinks),base.url)
+	}
+
 }
 
 // func shuffleChan(c chan string,){
@@ -94,7 +128,7 @@ func crawl(c chan string, allowedSites []string, max_threads int){
 	//don't crawl links twice
 	//can you check if a link exists - don't think you can just write to an array
 	
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 2; i++ {
 		//get url to crawl from channel
 		url := <- c
 
@@ -116,9 +150,8 @@ func crawl(c chan string, allowedSites []string, max_threads int){
 			//put data into.. csv
 
 			//add delay so as not to time out...
-			fmt.Println(i,len(crawledLinks),url)
 			
-			time.Sleep(time.Millisecond * 1000*max_threads)
+			//time.Sleep(time.Millisecond * 1000*max_threads)
 
 		}
 		
@@ -147,10 +180,38 @@ func getUrls(doc *goquery.Document, url string, base string) []string {
 	
 	var urls []string
 
+	doc.Find("div").Each(func(i int, s *goquery.Selection) {
+		fmt.Println(i)
+	})
+
 	doc.Find("a").Each(func(i int, s *goquery.Selection) {
-		
+
 
 	  	link, _ := s.Attr("href") //returns a string (must select what is inside)
+	  	fmt.Println(link)
+	  	if (strings.Contains(link,"http")) && !(strings.Contains(link,"javascript")) && (in_array(link,baseURLs)) {
+		  	if (string(link[0]) =="/"){
+		  		//find the base 
+		  		urls = append(urls,base+link)
+		  	} else {
+		  		urls = append(urls,link)
+		  	}
+	  	}
+	  	
+
+  	})
+
+	return urls
+}
+
+func getSpanText(doc *goquery.Document, url string, base string) []string {
+	
+	var urls []string
+
+	doc.Find("span.text").Each(func(i int, s *goquery.Selection) {
+		
+		link := s.Text()
+
 	  	if (strings.Contains(link,"http")) && !(strings.Contains(link,"javascript")) && (in_array(link,baseURLs)) {
 		  	if (string(link[0]) =="/"){
 		  		//find the base 
@@ -171,7 +232,6 @@ func addUrls(c chan string, urls *[]string, crawledLinks *[]string){
 	for _, value := range *urls {
 		//initialise found to false
 		found := false
-
 
 		if (strings.Contains(value,"http")) && !(strings.Contains(value,"javascript")) && (in_array(value,baseURLs)) {
 
