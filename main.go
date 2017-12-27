@@ -2,31 +2,32 @@ package main
 
 import (
 	"fmt"
-	//"time"
-	//"math/rand"
+	"os"
+	"time"
+	"math/rand"
 	"sync"
 	"github.com/PuerkitoBio/goquery"
 	"log"
 	"strings"
-//	"reflect"
+	"errors"
+	"reflect"
 )
 
 
-// type bg struct {
-// 	name string
-// 	price string
-// 	inStock string
-// 	supplier string
-// 	url string
-// }
-
-// var bgs []bg
-
-type bgSite struct {
-	url string
-	hasSitemap bool //can have multiple sitemaps
+type error interface {
+    Error() string
 }
 
+var debug bool = true
+
+type bg struct {
+	name string
+	price string
+	url string
+	InStock string
+}
+
+var bgs []bg
 
 var crawledLinks []string 
 
@@ -36,12 +37,6 @@ var baseURLs = []string{
 		"http://www.adventgames.com.au",
 		"http://www.gamesparadise.com.au",
 		"http://www.milsims.com.au"}
-
-var baseSites =[]bgSite{
-		{"http://www.adventgames.com.au", false},
-		{"http://www.gamesparadise.com.au",false},
-		{"http://www.milsims.com.au",false},
-	}
 
 
 func main() {
@@ -58,16 +53,19 @@ func main() {
 	for i:=0;i < max_threads;i++{
 		go crawl(c, baseURLs, max_threads)	
 	}
-	c <- "http://www.gamesparadise.com.au/board-games"
-	c <- "http://www.gamesparadise.com.au"
+	c <- "http://www.gamesparadise.com.au/the-settlers-of-catan-cities-knights-expansion"
+	c <-"http://www.milsims.com.au/node/138106"
+	c <- "http://www.adventgames.com.au/p/9230772/gloomhaven-preorder---2nd-printng---eta-18th-jan.html"
+	//c <- "http://www.milsims.com.au/node/138087"
 	
-	// for _, value := range allowedSites {
+	// for _, value := range baseURLs {
 	// 	c <- value
 	// }
 	
 	//don't want program to exit
 	var input string
 	fmt.Scanln(&input)
+	writeToFile()
 }
 
 
@@ -75,7 +73,7 @@ func crawl(c chan string, allowedSites []string, max_threads int){
 	//don't crawl links twice
 	//can you check if a link exists - don't think you can just write to an array
 	
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 100000; i++ {
 		//get url to crawl from channel
 		url := <- c
 
@@ -84,7 +82,11 @@ func crawl(c chan string, allowedSites []string, max_threads int){
 		//if this is a base url we are interested in process/else discard
 		if found {
 			//for the moment print what is happening
+			
+
 			fmt.Println(i,len(crawledLinks),url)
+			
+
 			//download content from url
 			content := getContent(url)
 			//get all links to crawl
@@ -99,7 +101,8 @@ func crawl(c chan string, allowedSites []string, max_threads int){
 			//add delay so as not to time out...
 			
 			//time.Sleep(time.Millisecond * 1000*max_threads)
-
+			amt:= time.Duration(rand.Intn(7000))
+			time.Sleep(time.Millisecond *amt)
 		}
 		
 	}
@@ -131,7 +134,6 @@ func getUrls(doc *goquery.Document, url string, base string) []string {
 
 
 	  	link, _ := s.Attr("href") //returns a string (must select what is inside)
-	  	fmt.Println(link)
 	  	if (strings.Contains(link,"http")) && !(strings.Contains(link,"javascript")) && (in_array(link,baseURLs)) {
 		  	if (string(link[0]) =="/"){
 		  		//find the base 
@@ -197,63 +199,66 @@ func in_array(val string, array []string) (exists bool) {
 
 func getbgData(doc *goquery.Document, url string) {
 	//want images -might want to get imagages
-	//var boardGame bg
+	var boardGame bg
+	//boardGame = bg{"mage knight","100"}
+	boardGame.url = url
+	boardGame.name,boardGame.price,boardGame.InStock = "","",""
+
 	if strings.Contains(url, "adventgames"){
-		
 		if strings.Contains(url, "/p/") {
-			doc.Find("div.our-price").Each(func(i int, s *goquery.Selection) {
-				test := s.Find("div").Text()
-				fmt.Println(i,test)
-			  })
 
-			//find title
-			doc.Find("div.product-title").Each(func(i int, s *goquery.Selection) {
-				test := s.Text()
-			  	fmt.Println(i,test)
-			})
+			if name, err := findHtmlTag("div.product-title",doc); err!= nil {
+				fmt.Print("No Data for URL: " + url + " and Tag: " + err.Error() + "\n")	
+			} else {
+				boardGame.name = name
+			}
 
-			//find in stock
-			doc.Find("div.product-currentstock").Each(func(i int, s *goquery.Selection) {
-				test := s.Text()
-			  	fmt.Println(i,test)
-			})
+			if price, err := findHtmlTag("div.our-price",doc); err!= nil {
+				fmt.Print("No Data for URL: " + url + " and Tag: " + err.Error() + "\n")	
+			} else {
+				boardGame.price = price
+			}
+
+			if InStock, err := findHtmlTag("div.product-currentstock",doc); err!= nil {
+				fmt.Print("No Data for URL: " + url + " and Tag: " + err.Error() + "\n")	
+			} else {
+				boardGame.InStock = InStock
+			}
 		}
 	} else if strings.Contains(url, "gamesparadise"){
-			//doc.Find("div.main.container.show-bg")
-			doc.Find("div.product-shop.grid12-6.no-right-gutter").Each(func(i int, s *goquery.Selection) {
+
+			if name, err := findHtmlTag("div.product-shop.grid12-6.no-right-gutter h1",doc); err!= nil {
+				fmt.Print("No Data for URL: " + url + " and Tag: " + err.Error() + "\n")	
+			} else {
+				boardGame.name = name
+			}
+
+			if price, err := findHtmlTag("div.product-shop.grid12-6.no-right-gutter span.price",doc); err!= nil {
+				fmt.Print("No Data for URL: " + url + " and Tag: " + err.Error() + "\n")	
+			} else {
+				boardGame.price = price
+			}
+
+			if InStock, err := findHtmlTag("div.product-shop.grid12-6.no-right-gutter p.availability.in-stock span",doc); err!= nil {
+				fmt.Print("No Data for URL: " + url + " and Tag: " + err.Error() + "\n")	
+			} else {
+				boardGame.InStock = InStock
+			}
 				
-				// s.Find("div").Each(func(j int, sel *goquery.Selection) {
-				// 	test := sel.Text()
-				// 	fmt.Println(j,test)
-				// })
-
-				s.Find("span.price").Each(func(j int, sel *goquery.Selection) {
-					test := sel.Text()
-					fmt.Println(j,test)
-				})
-
-				s.Find("h1").Each(func(j int, sel *goquery.Selection) {
-					test := sel.Text()
-					fmt.Println(j,test)
-				})
-
-				s.Find("p.availability.in-stock span").Each(func(j int, sel *goquery.Selection) {
-					test := sel.Text()
-					fmt.Println(j,test)
-				})
-
-			  })
+			
 	} else if strings.Contains(url, "milsims") && strings.Contains(url, "/node/"){
-		doc.Find("span.uc-price-product.uc-price-display.uc-price").Each(func(i int, s *goquery.Selection) {
-			test := s.Text()
-			fmt.Println(i,test)
-		  })
 
-		//find title
-		doc.Find("h2.art-postheader").Each(func(i int, s *goquery.Selection) {
-			test := s.Text()
-		  	fmt.Println(i,test)
-		})
+		if name, err := findHtmlTag("h2.art-postheader",doc); err!= nil {
+			fmt.Print("No Data for URL: " + url + " and Tag: " + err.Error() + "\n")	
+		} else {
+			boardGame.name = name
+		}
+
+		if price, err := findHtmlTag("span.uc-price-product.uc-price-display.uc-price",doc); err!= nil {
+			fmt.Print("No Data for URL: " + url + " and Tag: " + err.Error() + "\n")	
+		} else {
+			boardGame.price = price
+		}
 
 		//find in stock /need to traverse through all "b's" to find words
 		inStock:="In Stock"
@@ -262,6 +267,50 @@ func getbgData(doc *goquery.Document, url string) {
 				inStock = "Out of Stock"
 			}
 		})
-		fmt.Println(inStock)
+		boardGame.InStock = inStock
 	}
+
+	if boardGame.name != "" && boardGame.price != "" &&boardGame.InStock!= "" {
+		fmt.Println(boardGame.name , boardGame.price ,boardGame.InStock)
+		bgs = append(bgs,boardGame)
+	}
+}
+
+
+
+func findHtmlTag(tag string, doc *goquery.Document) (string,error) {
+
+	var interstr interface{}
+	var text string
+	err := errors.New("Tag not found: "+ tag)
+
+	doc.Find(tag).Each(func(i int, s *goquery.Selection) {
+			//will return the last tage found
+			interstr = s.Text()
+			
+			if i , ok := interstr.(string);ok {
+				err = nil
+				text = i
+			} else {
+				err = errors.New("Type found is not a string. Type is " + reflect.TypeOf(interstr).String())
+			}
+		})
+
+	return text, err 
+}
+
+func  writeToFile() {
+	file, err := os.Create("result.txt")
+
+    if err != nil {
+        log.Fatal("Cannot create file", err)
+    }
+    defer file.Close()
+	
+	for _,val := range bgs {
+
+		fmt.Fprintf(file,val.url + "\t"+ val.name + "\t"+ val.price + "\t"+ val.InStock +"\n")
+
+	}
+
 }
