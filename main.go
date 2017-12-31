@@ -11,8 +11,9 @@ import (
 	"strings"
 	"errors"
 	"reflect"
+	"github.com/temoto/robotstxt"
+	"net/http"
 )
-
 
 type error interface {
     Error() string
@@ -31,62 +32,219 @@ var bgs []bg
 
 var crawledLinks []string 
 
+var crawledSites int
+
 var m *sync.Mutex = new(sync.Mutex)
+
+type baseSite struct {
+	url string
+	r *robotstxt.Group
+	crawlDelay time.Duration
+	lastCrawl time.Time
+	mDelay *sync.Mutex
+}
+
+var baseSites = make(map[string]*baseSite)
+
 
 var baseURLs = []string{
 		"http://www.adventgames.com.au",
 		"http://www.gamesparadise.com.au",
-		"http://www.milsims.com.au"}
-
+		"http://www.milsims.com.au",}
 
 func main() {
+	//read robots.txt
 	//robots.txt, wait time so I don't denial of service //wait time
 
-	//initialise a channel with a bugger
-	buffer := 10000
+	//initialise a channel with a suitable buffer
+	buffer := 7000 * len(baseURLs)
 	var c chan string = make(chan string,buffer)
 	defer close(c)
 
+	crawledSites = 0
+
+	//initialise base sites and get robots.txt data
+	for _, url := range baseURLs{
+		addBase(url)	
+	}
 
 	//initialise crawlers with n= maxthreads crawlers
-	max_threads := 10
+	
+	max_threads := 1
 	for i:=0;i < max_threads;i++{
 		go crawl(c, baseURLs, max_threads)	
 	}
-	c <- "http://www.gamesparadise.com.au/the-settlers-of-catan-cities-knights-expansion"
-	c <-"http://www.milsims.com.au/node/138106"
-	c <- "http://www.adventgames.com.au/p/9230772/gloomhaven-preorder---2nd-printng---eta-18th-jan.html"
+	//c <- "http://www.gamesparadise.com.au/the-settlers-of-catan-cities-knights-expansion"
+	//c <-"http://www.milsims.com.au/node/138106"
+	//c <- "http://www.adventgames.com.au/p/9230772/gloomhaven-preorder---2nd-printng---eta-18th-jan.html"
 	//c <- "http://www.milsims.com.au/node/138087"
 	
-	// for _, value := range baseURLs {
-	// 	c <- value
-	// }
-	
+	for _, value := range baseURLs {
+		c <- value
+	}
+	c <- "http://www.milsims.com.au/catalog/1747"
+	go prioritiseCrawl(c,c,1000)
 	//don't want program to exit
-	var input string
-	fmt.Scanln(&input)
+	// var input string
+	// fmt.Scanln(&input)
+	
+
+	amt:= time.Duration(3600*1000*3)
+	time.Sleep(time.Millisecond *amt)
 	writeToFile()
 }
 
+//function reads the robots.txt file from the site and adds all the neccesary information
+//for us to use
+func addBase(site string){
+	
+	var b baseSite
+	
+	//get robots.txt file
+	b.url = site
+	resp, _ :=  http.Get(b.url + "/robots.txt")
+	defer resp.Body.Close()
+
+	//feed it to 
+	robots, err := robotstxt.FromResponse(resp)
+	
+	//what to do with errors here...?
+	if err != nil {
+	    fmt.Println("Error parsing robots.txt:")
+	}
+
+	group := robots.FindGroup("*")
+	b.r = group
+	b.crawlDelay = b.r.CrawlDelay
+
+	//if there is no delay found in the robots.txt then set the default to 3 seconds - be nice!
+	if b.crawlDelay < time.Duration(3000) {
+		b.crawlDelay = time.Duration(time.Second*3)
+	}
+
+	b.lastCrawl = time.Now()
+
+	b.mDelay = new(sync.Mutex)
+
+	fmt.Println("added url: ",b.url," with delay : ",b.crawlDelay," at: ",b.lastCrawl)
+	
+	baseSites[site] = &b
+
+}
+
+
+func prioritiseCrawl(cCrawl chan string, cLinks chan string,nLinks int) {
+	//var priorityLinks []string 
+	var priorityLinks = []string{"/node/","/p/"}//"/catalog/"
+
+	
+	for {
+
+		//sleep for 5 seconds
+		amt:= time.Duration(500)
+		time.Sleep(time.Millisecond *amt)
+
+		//take links out of cLinks shuffle and prioritise them
+		cBlocked := false
+
+		tempLinksCrawl :=[]string{}
+		tempLinksDelay := []string{}
+
+		for i:=0; i < len(cCrawl)/3 - 10; i++{
+			//timeout if waiting to long so this does not block our crawlers
+			
+			select {
+		    case link := <- cLinks:
+		        if in_array(link, priorityLinks) {
+					tempLinksCrawl = append(tempLinksCrawl,link)
+				} else {
+					tempLinksDelay= append(tempLinksDelay,link)
+				}
+		    case <-time.After(time.Second * 1):
+		        fmt.Println("priority link timeout 1", i)
+				cBlocked = true
+		    }
+		    //If the channel is now blocked get out of this loop
+		    if cBlocked {break}	
+		}
+
+		for i := range tempLinksCrawl {
+		    j := rand.Intn(i + 1)
+		    tempLinksCrawl[i], tempLinksCrawl[j] = tempLinksCrawl[j], tempLinksCrawl[i]
+		}
+
+		for i:= range tempLinksCrawl {
+			cCrawl <- tempLinksCrawl[i]
+		}
+
+		for i := range tempLinksDelay {
+			cCrawl <- tempLinksDelay[i]
+		}	
+		
+	}
+
+
+}
+
+func crawlAllowed(base string) {
+
+	for {
+
+		
+		if t:=time.Now(); t.Sub(baseSites[base].lastCrawl) > baseSites[base].crawlDelay {
+			baseSites[base].mDelay.Lock()
+			fmt.Println(baseSites[base].lastCrawl)
+			//why can't I assign
+			baseSites[base].lastCrawl = t
+			baseSites[base].mDelay.Unlock()
+			break
+		}
+
+		amt:= time.Duration(100 + rand.Intn(300))
+		time.Sleep(time.Millisecond *amt)
+	}
+
+}
 
 func crawl(c chan string, allowedSites []string, max_threads int){
 	//don't crawl links twice
 	//can you check if a link exists - don't think you can just write to an array
-	
-	for i := 0; i < 100000; i++ {
+	defer fmt.Println("exiting Crawler")
+
+
+	// for url := range c{
+
+	// }
+
+	//change for loop syntax to 
+	for i := 0; i < 2; i++ {
+
+		 //
+		t := time.Now()
+		
+		amt:= time.Duration(max_threads*10000 + rand.Intn(3000))
+		time.Sleep(time.Millisecond *amt)
 		//get url to crawl from channel
-		url := <- c
+		url:=""
+		select {
+		    case url = <- c:
+		    case <-time.After(time.Second * 1):
+		        fmt.Println("Crawler Blocked")
+			}
 
 		//find baseUrl
 		base, found := findBase(url)
+
+
+
+		//will return when a crawl is allowed -this should be paralised
+		crawlAllowed(base)
+		fmt.Println("Crawl Allowed", time.Now())
+
 		//if this is a base url we are interested in process/else discard
 		if found {
 			//for the moment print what is happening
 			
-
-			fmt.Println(i,len(crawledLinks),url)
-			
-
 			//download content from url
 			content := getContent(url)
 			//get all links to crawl
@@ -98,12 +256,15 @@ func crawl(c chan string, allowedSites []string, max_threads int){
 			
 			//put data into.. csv
 
-			//add delay so as not to time out...
+			//add delay so as not to time out...x`
 			
 			//time.Sleep(time.Millisecond * 1000*max_threads)
-			amt:= time.Duration(rand.Intn(7000))
-			time.Sleep(time.Millisecond *amt)
+			
 		}
+		
+		end := time.Now()
+		crawledSites+= 1
+		fmt.Println(t.Sub(end),crawledSites,i,len(crawledLinks),url)
 		
 	}
 
@@ -130,20 +291,27 @@ func getUrls(doc *goquery.Document, url string, base string) []string {
 	
 	var urls []string
 
+	var interstr interface{}
+	//need to add error checking
+	//err := errors.New("Tag not found: "+ tag)
+
 	doc.Find("a").Each(func(i int, s *goquery.Selection) {
 
-
 	  	link, _ := s.Attr("href") //returns a string (must select what is inside)
-	  	if (strings.Contains(link,"http")) && !(strings.Contains(link,"javascript")) && (in_array(link,baseURLs)) {
-		  	if (string(link[0]) =="/"){
-		  		//find the base 
-		  		urls = append(urls,base+link)
-		  	} else {
-		  		urls = append(urls,link)
-		  	}
-	  	}
-	  	
+	  
+	  	interstr = link
 
+	  	if _ , ok := interstr.(string);ok {
+				if len(link) > 0 {
+					if (string(link[0]) =="/"){
+			  			link = base + link
+				  	}
+
+				  	if (strings.Contains(link,"http")) && !(strings.Contains(link,"javascript")) && (in_array(link,baseURLs)) {
+					  	urls = append(urls,link)
+				  	}
+				}		
+		} 
   	})
 
 	return urls
@@ -152,13 +320,12 @@ func getUrls(doc *goquery.Document, url string, base string) []string {
 func addUrls(c chan string, urls *[]string, crawledLinks *[]string){	
 	//for each of the urls found on this page
 	for _, value := range *urls {
-		//initialise found to false
-		found := false
+		//initialfalse
 
 		if (strings.Contains(value,"http")) && !(strings.Contains(value,"javascript")) && (in_array(value,baseURLs)) {
 
-			//if the link found on this page has already been found before set the found flag
-			//link should only contain 1000s..? Exit if True?
+			//check to see if this link has been found before
+			found := false
 			for _,link_value := range *crawledLinks {
 
 				if value == link_value {
