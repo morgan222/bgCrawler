@@ -64,16 +64,22 @@ func main() {
 	crawledSites = 0
 
 	//initialise base sites and get robots.txt data
-	for _, url := range baseURLs{
-		addBase(url)	
+	var wgBases sync.WaitGroup
+	for _ , url := range baseURLs{
+		wgBases.Add(1)
+		addBase(url,&wgBases)
 	}
-
+	wgBases.Wait()
+	fmt.Println("wg Finished")
 	//initialise crawlers with n= maxthreads crawlers
 	
-	max_threads := 1
+	max_threads := 3
 	for i:=0;i < max_threads;i++{
-		go crawl(c, baseURLs, max_threads)	
+		go crawl(c, baseURLs, max_threads,i)	
 	}
+
+	//need a wait group here
+
 	//c <- "http://www.gamesparadise.com.au/the-settlers-of-catan-cities-knights-expansion"
 	//c <-"http://www.milsims.com.au/node/138106"
 	//c <- "http://www.adventgames.com.au/p/9230772/gloomhaven-preorder---2nd-printng---eta-18th-jan.html"
@@ -87,8 +93,7 @@ func main() {
 	//don't want program to exit
 	// var input string
 	// fmt.Scanln(&input)
-	
-
+	//implement waitgroup
 	amt:= time.Duration(3600*1000*3)
 	time.Sleep(time.Millisecond *amt)
 	writeToFile()
@@ -96,7 +101,7 @@ func main() {
 
 //function reads the robots.txt file from the site and adds all the neccesary information
 //for us to use
-func addBase(site string){
+func addBase(site string, wg *sync.WaitGroup){
 	
 	var b baseSite
 	
@@ -130,6 +135,8 @@ func addBase(site string){
 	
 	baseSites[site] = &b
 
+	//completed 
+	wg.Done()
 }
 
 
@@ -141,7 +148,7 @@ func prioritiseCrawl(cCrawl chan string, cLinks chan string,nLinks int) {
 	for {
 
 		//sleep for 5 seconds
-		amt:= time.Duration(500)
+		amt:= time.Duration(4000)
 		time.Sleep(time.Millisecond *amt)
 
 		//take links out of cLinks shuffle and prioritise them
@@ -189,41 +196,36 @@ func prioritiseCrawl(cCrawl chan string, cLinks chan string,nLinks int) {
 func crawlAllowed(base string) {
 
 	for {
-
-		
 		if t:=time.Now(); t.Sub(baseSites[base].lastCrawl) > baseSites[base].crawlDelay {
-			baseSites[base].mDelay.Lock()
-			fmt.Println(baseSites[base].lastCrawl)
-			//why can't I assign
+			//baseSites[base].mDelay.Lock()
 			baseSites[base].lastCrawl = t
-			baseSites[base].mDelay.Unlock()
+			//baseSites[base].mDelay.Unlock()
 			break
 		}
 
-		amt:= time.Duration(100 + rand.Intn(300))
+		amt:= time.Duration(100 + rand.Intn(100))
 		time.Sleep(time.Millisecond *amt)
 	}
 
 }
 
-func crawl(c chan string, allowedSites []string, max_threads int){
+func crawl(c chan string, allowedSites []string, max_threads int, crawlNo int){
 	//don't crawl links twice
 	//can you check if a link exists - don't think you can just write to an array
-	defer fmt.Println("exiting Crawler")
+	defer fmt.Println("exiting Crawler :",crawlNo)
 
 
+	//amt:= time.Duration(max_threads*10000 + rand.Intn(3000))
+	//time.Sleep(time.Millisecond *amt)
 	// for url := range c{
 
 	// }
 
 	//change for loop syntax to 
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 4; i++ {
 
-		 //
 		t := time.Now()
 		
-		amt:= time.Duration(max_threads*10000 + rand.Intn(3000))
-		time.Sleep(time.Millisecond *amt)
 		//get url to crawl from channel
 		url:=""
 		select {
@@ -235,11 +237,15 @@ func crawl(c chan string, allowedSites []string, max_threads int){
 		//find baseUrl
 		base, found := findBase(url)
 
-
-
 		//will return when a crawl is allowed -this should be paralised
+		
+		baseSites[base].mDelay.Lock()
 		crawlAllowed(base)
-		fmt.Println("Crawl Allowed", time.Now())
+		baseSites[base].mDelay.Unlock()
+		fmt.Println("Crawl Allowed: ",base ,time.Now().Format("15:04:05"))
+
+		//amt:= time.Duration(rand.Intn(max_threads*10000))
+		//time.Sleep(time.Millisecond *amt)
 
 		//if this is a base url we are interested in process/else discard
 		if found {
@@ -264,7 +270,7 @@ func crawl(c chan string, allowedSites []string, max_threads int){
 		
 		end := time.Now()
 		crawledSites+= 1
-		fmt.Println(t.Sub(end),crawledSites,i,len(crawledLinks),url)
+		fmt.Println("crawler: ",crawlNo, end.Format("15:04:05"),end.Sub(t),crawledSites,i,len(crawledLinks),url)
 		
 	}
 
@@ -301,16 +307,20 @@ func getUrls(doc *goquery.Document, url string, base string) []string {
 	  
 	  	interstr = link
 
+	  	//check if a string is returned
 	  	if _ , ok := interstr.(string);ok {
-				if len(link) > 0 {
-					if (string(link[0]) =="/"){
-			  			link = base + link
-				  	}
+			if len(link) > 0 {
+				if (string(link[0]) =="/"){
+		  			link = base + link
+			  	}
 
-				  	if (strings.Contains(link,"http")) && !(strings.Contains(link,"javascript")) && (in_array(link,baseURLs)) {
-					  	urls = append(urls,link)
-				  	}
-				}		
+			  	//check if this link is allowed using robots.txt
+			  	if  (baseSites[base].r.Test(strings.Replace(link, base, "", 1))) {
+			  		if (strings.Contains(link,"http")) && !(strings.Contains(link,"javascript")) && (in_array(link,baseURLs)) {
+				  		urls = append(urls,link)
+			  		}
+			  	}
+			}		
 		} 
   	})
 
