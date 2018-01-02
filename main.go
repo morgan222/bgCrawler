@@ -1,5 +1,8 @@
 package main
 
+//need to run a long test
+//need 
+
 import (
 	"fmt"
 	"os"
@@ -57,25 +60,27 @@ func main() {
 	//robots.txt, wait time so I don't denial of service //wait time
 
 	//initialise a channel with a suitable buffer
-	buffer := 7000 * len(baseURLs)
+	buffer := 20000 * len(baseURLs)
 	var c chan string = make(chan string,buffer)
 	defer close(c)
 
 	crawledSites = 0
 
 	//initialise base sites and get robots.txt data
-	var wgBases sync.WaitGroup
+	var wg sync.WaitGroup
+
 	for _ , url := range baseURLs{
-		wgBases.Add(1)
-		addBase(url,&wgBases)
+		wg.Add(1)
+		addBase(url,&wg)
 	}
-	wgBases.Wait()
+	wg.Wait()
 	fmt.Println("wg Finished")
 	//initialise crawlers with n= maxthreads crawlers
 	
-	max_threads := 3
+	max_threads := 20
 	for i:=0;i < max_threads;i++{
-		go crawl(c, baseURLs, max_threads,i)	
+		wg.Add(1)
+		go crawl(c, baseURLs, max_threads,i,&wg)
 	}
 
 	//need a wait group here
@@ -94,9 +99,13 @@ func main() {
 	// var input string
 	// fmt.Scanln(&input)
 	//implement waitgroup
-	amt:= time.Duration(3600*1000*3)
-	time.Sleep(time.Millisecond *amt)
+
+	wg.Wait() //wait for crawlers to finish
+	//amt:= time.Duration(3600*1000*3)
+	//time.Sleep(time.Millisecond *amt)
 	writeToFile()
+
+	fmt.Println("time Finished",time.Now())
 }
 
 //function reads the robots.txt file from the site and adds all the neccesary information
@@ -107,7 +116,12 @@ func addBase(site string, wg *sync.WaitGroup){
 	
 	//get robots.txt file
 	b.url = site
-	resp, _ :=  http.Get(b.url + "/robots.txt")
+	resp, err :=  http.Get(b.url + "/robots.txt")
+	
+	if err != nil {
+	    fmt.Println("Error accessing robots.txt")
+	}
+
 	defer resp.Body.Close()
 
 	//feed it to 
@@ -186,11 +200,8 @@ func prioritiseCrawl(cCrawl chan string, cLinks chan string,nLinks int) {
 
 		for i := range tempLinksDelay {
 			cCrawl <- tempLinksDelay[i]
-		}	
-		
+		}		
 	}
-
-
 }
 
 func crawlAllowed(base string) {
@@ -209,40 +220,44 @@ func crawlAllowed(base string) {
 
 }
 
-func crawl(c chan string, allowedSites []string, max_threads int, crawlNo int){
+func crawl(c chan string, allowedSites []string, max_threads int, crawlNo int, wg *sync.WaitGroup){
 	//don't crawl links twice
 	//can you check if a link exists - don't think you can just write to an array
 	defer fmt.Println("exiting Crawler :",crawlNo)
 
-
-	//amt:= time.Duration(max_threads*10000 + rand.Intn(3000))
-	//time.Sleep(time.Millisecond *amt)
+	//amt:= time.Duration(2000)
+	amt:= time.Duration(rand.Intn(3000))
+	time.Sleep(time.Millisecond *amt)
 	// for url := range c{
 
 	// }
-
 	//change for loop syntax to 
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 10000; i++ {
 
 		t := time.Now()
 		
+
 		//get url to crawl from channel
 		url:=""
+		finish_crawl:=false
 		select {
 		    case url = <- c:
-		    case <-time.After(time.Second * 1):
-		        fmt.Println("Crawler Blocked")
+		    case <-time.After(time.Second * 2000):
+		    	//time.Sleep(time.Millisecond *3000)
+		    	fmt.Println("Crawler Blocked")
+		    	finish_crawl = true
 			}
 
+		if finish_crawl {break}
 		//find baseUrl
 		base, found := findBase(url)
 
 		//will return when a crawl is allowed -this should be paralised
-		
+		//change this to defer
 		baseSites[base].mDelay.Lock()
 		crawlAllowed(base)
 		baseSites[base].mDelay.Unlock()
-		fmt.Println("Crawl Allowed: ",base ,time.Now().Format("15:04:05"))
+		//fmt.Println("Crawl Allowed: ",base ,time.Now().Format("15:04:05"))
 
 		//amt:= time.Duration(rand.Intn(max_threads*10000))
 		//time.Sleep(time.Millisecond *amt)
@@ -264,8 +279,7 @@ func crawl(c chan string, allowedSites []string, max_threads int, crawlNo int){
 
 			//add delay so as not to time out...x`
 			
-			//time.Sleep(time.Millisecond * 1000*max_threads)
-			
+			//time.Sleep(time.Millisecond * 1000*max_threads)	
 		}
 		
 		end := time.Now()
@@ -273,7 +287,7 @@ func crawl(c chan string, allowedSites []string, max_threads int, crawlNo int){
 		fmt.Println("crawler: ",crawlNo, end.Format("15:04:05"),end.Sub(t),crawledSites,i,len(crawledLinks),url)
 		
 	}
-
+	wg.Done()
 }
 
 func findBase(url string) (string, bool) {
@@ -347,11 +361,19 @@ func addUrls(c chan string, urls *[]string, crawledLinks *[]string){
 			if found == false {
 				//fmt.Println(value)
 				//add this link to the channel for scraping
-				c <- value
-				//lock and append this new link to our array
-				m.Lock()
-				*crawledLinks = append(*crawledLinks,value)
-				m.Unlock()
+				if cap(c) - len(c) > 500 {
+					select {
+					case c <- value:
+					default:
+						//not sure what to do here
+					}
+					
+					//lock and append this new link to our array
+					m.Lock()
+					*crawledLinks = append(*crawledLinks,value)
+					m.Unlock()
+				}
+				
 			}	
 		}
 		
