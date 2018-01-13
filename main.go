@@ -1,7 +1,7 @@
 package main
 
-//need to run a long test
-//need 
+//5699 links in 9 hrs...
+//need to add links and possibly database
 
 import (
 	"fmt"
@@ -16,6 +16,10 @@ import (
 	"reflect"
 	"github.com/temoto/robotstxt"
 	"net/http"
+	"strconv"
+	"database/sql"
+	_ "github.com/mattn/go-sqlite3"
+
 )
 
 type error interface {
@@ -23,6 +27,12 @@ type error interface {
 }
 
 var debug bool = true
+
+type bgDoc struct {
+	baseURL string
+	url string
+	doc *goquery.Document
+}
 
 type bg struct {
 	name string
@@ -56,17 +66,17 @@ var baseURLs = []string{
 		"http://www.milsims.com.au",}
 
 func main() {
-	//read robots.txt
-	//robots.txt, wait time so I don't denial of service //wait time
+	//initialise logs
+    f, err := os.OpenFile("bgLog", os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+    if err != nil {
+            log.Fatal(err)
+    }   
+    //defer to close when you're done with it, not because you think it's idiomatic!
+    defer f.Close()
+    //set output of logs to f
+    log.SetOutput(f)
 
-	//initialise a channel with a suitable buffer
-	buffer := 20000 * len(baseURLs)
-	var c chan string = make(chan string,buffer)
-	defer close(c)
-
-	crawledSites = 0
-
-	//initialise base sites and get robots.txt data
+	//initialise base sites from robots.txt data
 	var wg sync.WaitGroup
 
 	for _ , url := range baseURLs{
@@ -74,38 +84,121 @@ func main() {
 		addBase(url,&wg)
 	}
 	wg.Wait()
-	fmt.Println("wg Finished")
-	//initialise crawlers with n= maxthreads crawlers
 	
-	max_threads := 20
+
+	//initialise a channel with a suitable buffer
+	buffer := 20000 * len(baseURLs)
+	var cLinks chan string = make(chan string,buffer)
+	defer close(cLinks)
+
+	crawledSites = 0
+
+	var cDocs chan bgDoc = make(chan bgDoc,10)
+	defer close(cDocs)
+
+	//go read_docs(cDocs) //get rid of function when I actually do something here
+
+	//not sure how many crawlers to use here
+
+	max_threads := 3
 	for i:=0;i < max_threads;i++{
 		wg.Add(1)
-		go crawl(c, baseURLs, max_threads,i,&wg)
+		go crawl(cLinks,cDocs, baseURLs, "crawler_"+strconv.Itoa(i),&wg)
 	}
 
-	//need a wait group here
 
-	//c <- "http://www.gamesparadise.com.au/the-settlers-of-catan-cities-knights-expansion"
-	//c <-"http://www.milsims.com.au/node/138106"
-	//c <- "http://www.adventgames.com.au/p/9230772/gloomhaven-preorder---2nd-printng---eta-18th-jan.html"
-	//c <- "http://www.milsims.com.au/node/138087"
-	
+	for i:=0;i<3;i++{
+		go crawlContent(cLinks, cDocs ,"content_crawler_"+strconv.Itoa(i))
+	}
+
+
 	for _, value := range baseURLs {
-		c <- value
+		cLinks <- value
 	}
-	c <- "http://www.milsims.com.au/catalog/1747"
-	go prioritiseCrawl(c,c,1000)
-	//don't want program to exit
-	// var input string
-	// fmt.Scanln(&input)
-	//implement waitgroup
 
-	wg.Wait() //wait for crawlers to finish
-	//amt:= time.Duration(3600*1000*3)
-	//time.Sleep(time.Millisecond *amt)
-	writeToFile()
+	go prioritiseCrawl(cLinks,cLinks,1000)
 
-	fmt.Println("time Finished",time.Now())
+	// for i:=0;i<30;i++{
+	// 	j:=rand.Intn(3)
+	// 	fmt.Println(baseURLs[j])
+	// 	cLinks <- baseURLs[j]
+	// }
+
+	wg.Wait()
+
+	var input string
+	fmt.Scanln(&input)
+
+	//initialise crawlers with n= maxthreads crawlers
+	
+	// max_threads := 20
+	// for i:=0;i < max_threads;i++{
+	// 	wg.Add(1)
+	// 	go crawl(c, baseURLs, max_threads,i,&wg)
+	// }
+
+	// //need a wait group here
+
+	// //c <- "http://www.gamesparadise.com.au/the-settlers-of-catan-cities-knights-expansion"
+	// //c <-"http://www.milsims.com.au/node/138106"
+	// //c <- "http://www.adventgames.com.au/p/9230772/gloomhaven-preorder---2nd-printng---eta-18th-jan.html"
+	// //c <- "http://www.milsims.com.au/node/138087"
+	
+	// for _, value := range baseURLs {
+	// 	c <- value
+	// }
+	// c <- "http://www.milsims.com.au/catalog/1747"
+	// go prioritiseCrawl(c,c,1000)
+	// //don't want program to exit
+	// // var input string
+	// // fmt.Scanln(&input)
+	// //implement waitgroup
+
+	// wg.Wait() //wait for crawlers to finish
+	// //amt:= time.Duration(3600*1000*3)
+	// //time.Sleep(time.Millisecond *amt)
+	// writeToFile()
+
+	// fmt.Println("time Finished",time.Now())
+}
+
+
+//function 
+func crawlContent(cLinks chan string, cDocs chan bgDoc,crawlerName string){
+
+	defer log.Println("exiting Crawler :",crawlerName)
+
+	for url := range cLinks {
+
+		//get base YRL
+		base, found := findBase(url)
+		
+		if found {
+			//only crawl this url if allowed
+
+			crawlAllowed(base)
+			
+	        doc, err := goquery.NewDocument(url)
+
+	        //if a document is returned add it to the channel
+	        if err != nil {
+
+	        }
+
+        	NewbgDoc := bgDoc{base,url,doc}
+        	log.Println(crawlerName,url, time.Now().Format("15:04:05"))
+			fmt.Println(crawlerName,url, time.Now().Format("15:04:05"))
+        	//insert into db
+        	insertlink(url)
+        	
+        	select {
+			case cDocs <- NewbgDoc:
+			case <-time.After(time.Second * 2):
+		        log.Println("timeout after 2 secs")
+				//not sure what to do here - log error?
+			}
+		}
+    }
 }
 
 //function reads the robots.txt file from the site and adds all the neccesary information
@@ -156,8 +249,10 @@ func addBase(site string, wg *sync.WaitGroup){
 
 func prioritiseCrawl(cCrawl chan string, cLinks chan string,nLinks int) {
 	//var priorityLinks []string 
-	var priorityLinks = []string{"/node/","/p/"}//"/catalog/"
-
+	var priorityLinks = []string{"http://www.milsims.com.au/node/",
+		"http://www.adventgames.com.au/p/",
+		"http://www.gamesparadise.com.au/board-games/",}//"/catalog/"
+	//want to make sure sites are ordered by
 	
 	for {
 
@@ -205,7 +300,8 @@ func prioritiseCrawl(cCrawl chan string, cLinks chan string,nLinks int) {
 }
 
 func crawlAllowed(base string) {
-
+	baseSites[base].mDelay.Lock()
+	defer baseSites[base].mDelay.Unlock()
 	for {
 		if t:=time.Now(); t.Sub(baseSites[base].lastCrawl) > baseSites[base].crawlDelay {
 			//baseSites[base].mDelay.Lock()
@@ -220,28 +316,16 @@ func crawlAllowed(base string) {
 
 }
 
-func crawl(c chan string, allowedSites []string, max_threads int, crawlNo int, wg *sync.WaitGroup){
-	//don't crawl links twice
-	//can you check if a link exists - don't think you can just write to an array
-	defer fmt.Println("exiting Crawler :",crawlNo)
+func crawl(cLinks chan string, cDocs chan bgDoc, allowedSites []string, crawlerName string, wg *sync.WaitGroup){
+	
+	var newbgDoc bgDoc
 
-	//amt:= time.Duration(2000)
-	amt:= time.Duration(rand.Intn(3000))
-	time.Sleep(time.Millisecond *amt)
-	// for url := range c{
-
-	// }
-	//change for loop syntax to 
-	for i := 0; i < 10000; i++ {
-
-		t := time.Now()
-		
-
-		//get url to crawl from channel
-		url:=""
+	defer fmt.Println("exiting Crawler :",crawlerName)
+	
+	for {
 		finish_crawl:=false
 		select {
-		    case url = <- c:
+		    case newbgDoc = <- cDocs:
 		    case <-time.After(time.Second * 2000):
 		    	//time.Sleep(time.Millisecond *3000)
 		    	fmt.Println("Crawler Blocked")
@@ -249,46 +333,91 @@ func crawl(c chan string, allowedSites []string, max_threads int, crawlNo int, w
 			}
 
 		if finish_crawl {break}
-		//find baseUrl
-		base, found := findBase(url)
 
-		//will return when a crawl is allowed -this should be paralised
-		//change this to defer
-		baseSites[base].mDelay.Lock()
-		crawlAllowed(base)
-		baseSites[base].mDelay.Unlock()
-		//fmt.Println("Crawl Allowed: ",base ,time.Now().Format("15:04:05"))
-
-		//amt:= time.Duration(rand.Intn(max_threads*10000))
-		//time.Sleep(time.Millisecond *amt)
-
-		//if this is a base url we are interested in process/else discard
-		if found {
-			//for the moment print what is happening
-			
-			//download content from url
-			content := getContent(url)
-			//get all links to crawl
-			urls := getUrls(content,url,base)
-			//add all urls to channel
-			addUrls(c,&urls,&crawledLinks)
-			// //get all bg data from this url
-			getbgData(content,url)	
-			
-			//put data into.. csv
-
-			//add delay so as not to time out...x`
-			
-			//time.Sleep(time.Millisecond * 1000*max_threads)	
-		}
-		
-		end := time.Now()
-		crawledSites+= 1
-		fmt.Println("crawler: ",crawlNo, end.Format("15:04:05"),end.Sub(t),crawledSites,i,len(crawledLinks),url)
-		
+		base:=newbgDoc.baseURL
+		content:=newbgDoc.doc
+		url:= newbgDoc.url
+		//download content from url
+		//content := getContent(url)
+		//get all links to crawl
+		urls := getUrls(content,base)
+		//add all urls to channel
+		addUrls(cLinks,&urls,&crawledLinks)
+		// //get all bg data from this url
+		getbgData(content,url)	
 	}
 	wg.Done()
 }
+
+// func crawl(c chan string, allowedSites []string, max_threads int, crawlNo int, wg *sync.WaitGroup){
+// 	//don't crawl links twice
+// 	//can you check if a link exists - don't think you can just write to an array
+// 	defer fmt.Println("exiting Crawler :",crawlNo)
+
+// 	//amt:= time.Duration(2000)
+// 	amt:= time.Duration(rand.Intn(3000))
+// 	time.Sleep(time.Millisecond *amt)
+// 	// for url := range c{
+
+// 	// }
+// 	//change for loop syntax to 
+// 	for i := 0; i < 10000; i++ {
+
+// 		t := time.Now()
+		
+
+// 		//get url to crawl from channel
+// 		url:=""
+// 		finish_crawl:=false
+// 		select {
+// 		    case url = <- c:
+// 		    case <-time.After(time.Second * 2000):
+// 		    	//time.Sleep(time.Millisecond *3000)
+// 		    	fmt.Println("Crawler Blocked")
+// 		    	finish_crawl = true
+// 			}
+
+// 		if finish_crawl {break}
+// 		//find baseUrl
+// 		base, found := findBase(url)
+
+// 		//will return when a crawl is allowed -this should be paralised
+// 		//change this to defer
+		
+// 		crawlAllowed(base)
+		
+// 		//fmt.Println("Crawl Allowed: ",base ,time.Now().Format("15:04:05"))
+
+// 		//amt:= time.Duration(rand.Intn(max_threads*10000))
+// 		//time.Sleep(time.Millisecond *amt)
+
+// 		//if this is a base url we are interested in process/else discard
+// 		if found {
+// 			//for the moment print what is happening
+			
+// 			//download content from url
+// 			content := getContent(url)
+// 			//get all links to crawl
+// 			urls := getUrls(content,url,base)
+// 			//add all urls to channel
+// 			addUrls(c,&urls,&crawledLinks)
+// 			// //get all bg data from this url
+// 			getbgData(content,url)	
+			
+// 			//put data into.. csv
+
+// 			//add delay so as not to time out...x`
+			
+// 			//time.Sleep(time.Millisecond * 1000*max_threads)	
+// 		}
+		
+// 		end := time.Now()
+// 		crawledSites+= 1
+// 		fmt.Println("crawler: ",crawlNo, end.Format("15:04:05"),end.Sub(t),crawledSites,i,len(crawledLinks),url)
+		
+// 	}
+// 	wg.Done()
+// }
 
 func findBase(url string) (string, bool) {
 	for _ , base := range baseURLs {
@@ -299,6 +428,7 @@ func findBase(url string) (string, bool) {
 	return "",false	
 }
 
+
 func getContent(url string) *goquery.Document {
 	doc, err := goquery.NewDocument(url)
 	if err != nil {
@@ -307,7 +437,7 @@ func getContent(url string) *goquery.Document {
 	return doc
 }
 
-func getUrls(doc *goquery.Document, url string, base string) []string {
+func getUrls(doc *goquery.Document, base string) []string {
 	
 	var urls []string
 
@@ -471,11 +601,66 @@ func getbgData(doc *goquery.Document, url string) {
 
 	if boardGame.name != "" && boardGame.price != "" &&boardGame.InStock!= "" {
 		fmt.Println(boardGame.name , boardGame.price ,boardGame.InStock)
-		bgs = append(bgs,boardGame)
+		//bgs = append(bgs,boardGame)
+		insertbg(&boardGame)
 	}
 }
 
+func insertlink(url string) {
+	now:= time.Now().UTC()
+	//open conection to database
+	db, err := sql.Open("sqlite3", "./bg.db")
+	checkErr(err)
+	defer db.Close()
 
+	stmt, err := db.Prepare("INSERT INTO bgURLS(url,hasbg,dte) values(?,?,?)")
+    checkErr(err)
+    //insert data
+    _ , err1 := stmt.Exec(url,"No", now.Format("2006-01-02 15:04:05"))
+    checkErr(err1)
+
+}
+
+func insertbg(boardGame *bg){
+	now:= time.Now().UTC()
+
+	//open conection to database
+	db, err := sql.Open("sqlite3", "./bg.db")
+	checkErr(err)
+	defer db.Close()
+
+	stmt1, err := db.Prepare("DELETE FROM bg WHERE url = ?")
+    checkErr(err)
+
+    _, err1 := stmt1.Exec(boardGame.url)
+    checkErr(err1)
+
+    stmt2, err2 := db.Prepare("INSERT INTO bg(name,url,price,instock,dte) values(?,?,?,?,?)")
+    checkErr(err2)
+    //insert data
+    _ , err3 := stmt2.Exec(boardGame.name, boardGame.url,boardGame.price,boardGame.InStock, now.Format("2006-01-02 15:04:05"))
+    checkErr(err3)
+
+    stmt3, err3 := db.Prepare("DELETE FROM bgURLS WHERE url = ?")
+    checkErr(err3)
+
+    _, err4 := stmt3.Exec(boardGame.url)
+    checkErr(err4)
+
+    stmt4, err5 := db.Prepare("INSERT INTO bgURLS(url,hasbg,dte) values(?,?,?)")
+    checkErr(err5)
+    //insert data
+    _ , err6 := stmt4.Exec(boardGame.url,"Yes", now.Format("2006-01-02 15:04:05"))
+    checkErr(err6)
+    // _, err := res.LastInsertId()
+    // checkErr(err)
+}
+
+func checkErr(err error) {
+    if err != nil {
+        panic(err)
+    }
+}
 
 func findHtmlTag(tag string, doc *goquery.Document) (string,error) {
 
